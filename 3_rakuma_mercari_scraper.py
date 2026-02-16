@@ -27,6 +27,14 @@ except ImportError as e:
     logger.warning(f"ヤフオクスクレイピング機能が利用できません: {e}")
     YAHOOKU_AVAILABLE = False
 
+# ラクマ自動ログイン機能のインポート
+try:
+    from rakuma_auto_login import auto_login_rakuma
+    RAKUMA_AUTO_LOGIN_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"ラクマ自動ログイン機能が利用できません: {e}")
+    RAKUMA_AUTO_LOGIN_AVAILABLE = False
+
 def configure_logging(verbose=False):
     level = logging.DEBUG if verbose else logging.INFO
     logging.basicConfig(
@@ -153,7 +161,7 @@ def is_logged_in_mercari_shops(page):
         logger.warning(f"  ログイン状態判定エラー: {e}")
         return False
 
-def wait_for_manual_login(page, site_name, timeout_seconds=30, is_logged_in_func=None):
+def wait_for_manual_login(page, site_name, timeout_seconds=30, is_logged_in_func=None, auto_login_func=None):
     """
     ブラウザで手動ログインを行う時間を確保する（ログイン済みなら自動スキップ）
     
@@ -162,12 +170,25 @@ def wait_for_manual_login(page, site_name, timeout_seconds=30, is_logged_in_func
         site_name: サイト名（ログ出力用）
         timeout_seconds: 待機時間（秒）
         is_logged_in_func: ログイン状態を判定する関数（オプション）
+        auto_login_func: 自動ログイン関数（オプション）
     """
     # ログイン状態を確認
     if is_logged_in_func:
         if is_logged_in_func(page):
             logger.info(f"✅ {site_name} は既にログイン済みです。スクレイピングを開始します\n")
             return
+    
+    # 自動ログインを試みる
+    if auto_login_func:
+        logger.info(f"🔐 {site_name} への自動ログインを試みます...")
+        try:
+            if auto_login_func(page):
+                logger.info(f"✅ {site_name} への自動ログイン成功\n")
+                return
+            else:
+                logger.info(f"⚠️ 自動ログイン失敗。手動ログインに切り替えます\n")
+        except Exception as e:
+            logger.warning(f"⚠️ 自動ログイン中にエラー: {e}。手動ログインに切り替えます\n")
     
     logger.info(f"\n⏳ {site_name} に手動でログインしてください")
     logger.info(f"   ブラウザウィンドウでログインを完了してください")
@@ -238,8 +259,9 @@ def scrape_rakuma_selling_stats():
             
             time.sleep(1)
             
-            # 手動ログイン用の待機（ページ読み込み後、60秒）
-            wait_for_manual_login(page, "ラクマ（出品中商品）", timeout_seconds=60, is_logged_in_func=is_logged_in_rakuma)
+            # 自動ログイン（.env設定時）または手動ログイン用の待機（ページ読み込み後、60秒）
+            auto_login_func_rakuma = auto_login_rakuma if RAKUMA_AUTO_LOGIN_AVAILABLE else None
+            wait_for_manual_login(page, "ラクマ（出品中商品）", timeout_seconds=60, is_logged_in_func=is_logged_in_rakuma, auto_login_func=auto_login_func_rakuma)
             
             # ログイン確認（複数回リトライ）
             max_login_retries = 3
@@ -428,8 +450,9 @@ def scrape_rakuma_draft_items():
             
             time.sleep(1)
             
-            # 手動ログイン用の待機（ページ読み込み後、60秒）
-            wait_for_manual_login(page, "ラクマ（下書きタブ）", timeout_seconds=60, is_logged_in_func=is_logged_in_rakuma)
+            # 自動ログイン（.env設定時）または手動ログイン用の待機（ページ読み込み後、60秒）
+            auto_login_func_rakuma = auto_login_rakuma if RAKUMA_AUTO_LOGIN_AVAILABLE else None
+            wait_for_manual_login(page, "ラクマ（下書きタブ）", timeout_seconds=60, is_logged_in_func=is_logged_in_rakuma, auto_login_func=auto_login_func_rakuma)
             
             # 「出品していた」タブをクリック
             try:
