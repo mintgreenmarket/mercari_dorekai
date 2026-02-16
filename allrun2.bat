@@ -49,8 +49,8 @@ if %STEP3_ERROR% neq 0 (
 )
 
 echo.
-echo [4/6] ラクマ下書き移動...
-call 4_rakuma_draft_mover.bat
+echo [4/6] ラクマ新規出品...
+call 4_rakuma_new_items.bat
 if %errorlevel% neq 0 (
     echo   ❌ エラーが発生しました。処理を中止します。
     set ERROR_FLAG=1
@@ -58,8 +58,8 @@ if %errorlevel% neq 0 (
 )
 
 echo.
-echo [5/6] ラクマ新規出品...
-call 5_rakuma_new_items.bat
+echo [5/6] ラクマ下書き移動...
+call 5_rakuma_draft_mover.bat
 if %errorlevel% neq 0 (
     echo   ⚠️ 警告: エラーが発生しましたが続行します
 )

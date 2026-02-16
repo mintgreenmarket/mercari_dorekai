@@ -12,7 +12,31 @@ load_dotenv(r"C:\Users\progr\Desktop\Python\mercari_dorekai\.env")
 
 RAKUMA_EMAIL = os.getenv("RAKUMA_EMAIL")
 RAKUMA_PASSWORD = os.getenv("RAKUMA_PASSWORD")
-RAKUMA_LOGIN_URL = "https://fril.jp/login"
+RAKUMA_LOGIN_URL = "https://fril.jp/users/sign_in"
+
+
+def _click_first_visible(page: Page, selectors, timeout_ms=2000) -> bool:
+    for selector in selectors:
+        try:
+            locator = page.locator(selector).first
+            if locator.is_visible(timeout=timeout_ms):
+                locator.click()
+                return True
+        except Exception:
+            continue
+    return False
+
+
+def _fill_first(page: Page, selectors, value, timeout_ms=5000) -> bool:
+    for selector in selectors:
+        try:
+            locator = page.locator(selector).first
+            locator.wait_for(state="visible", timeout=timeout_ms)
+            locator.fill(value)
+            return True
+        except Exception:
+            continue
+    return False
 
 
 def auto_login_rakuma(page: Page, force_login: bool = False) -> bool:
@@ -42,38 +66,83 @@ def auto_login_rakuma(page: Page, force_login: bool = False) -> bool:
         # ログインページへ移動
         if force_login or not is_logged_in_rakuma(page):
             print(f"   ログインページへ移動: {RAKUMA_LOGIN_URL}")
-            page.goto(RAKUMA_LOGIN_URL, timeout=30000, wait_until='load')
+            page.goto(RAKUMA_LOGIN_URL, timeout=30000, wait_until="load")
             time.sleep(2)
-            
-            # メールアドレス入力
-            try:
-                email_input = page.locator('input[name="email"], input[type="email"], input[placeholder*="メール"]').first
-                email_input.fill(RAKUMA_EMAIL)
-                print(f"   ✅ メールアドレス入力完了")
-                time.sleep(0.5)
-            except Exception as e:
-                print(f"   ❌ メールアドレス入力フィールドが見つかりません: {e}")
+
+            # 楽天会員ログインボタンをクリック
+            rakuten_clicked = _click_first_visible(
+                page,
+                [
+                    "a#rakuten",
+                    "a[href*='auth/rakuten/login']",
+                    "a:has-text('楽天会員ログイン')",
+                ],
+                timeout_ms=3000,
+            )
+            if rakuten_clicked:
+                print("   ✅ 楽天会員ログインをクリック")
+                time.sleep(2)
+
+            # ユーザIDまたはメールアドレス入力
+            email_filled = _fill_first(
+                page,
+                [
+                    "#user_id",
+                    "input[name='username']",
+                    "input[autocomplete='username']",
+                    "input[type='text'][aria-label*='ユーザID']",
+                ],
+                RAKUMA_EMAIL,
+            )
+            if not email_filled:
+                print("   ❌ ユーザID/メール入力フィールドが見つかりません")
                 return False
-            
+            print("   ✅ ユーザID/メール入力完了")
+
+            # 次へボタン（ID: cta001）
+            next_clicked = _click_first_visible(
+                page,
+                [
+                    "#cta001",
+                    "div#cta001[role='button']",
+                    "button:has-text('次へ')",
+                ],
+                timeout_ms=3000,
+            )
+            if next_clicked:
+                print("   ✅ 次へボタンをクリック")
+                time.sleep(2)
+
             # パスワード入力
-            try:
-                password_input = page.locator('input[name="password"], input[type="password"], input[placeholder*="パスワード"]').first
-                password_input.fill(RAKUMA_PASSWORD)
-                print(f"   ✅ パスワード入力完了")
-                time.sleep(0.5)
-            except Exception as e:
-                print(f"   ❌ パスワード入力フィールドが見つかりません: {e}")
+            password_filled = _fill_first(
+                page,
+                [
+                    "#password_current",
+                    "input[name='password']",
+                    "input[autocomplete='current-password']",
+                    "input[type='password'][aria-label*='パスワード']",
+                ],
+                RAKUMA_PASSWORD,
+            )
+            if not password_filled:
+                print("   ❌ パスワード入力フィールドが見つかりません")
                 return False
-            
-            # ログインボタンをクリック
-            try:
-                login_button = page.locator('button[type="submit"], input[type="submit"], button:has-text("ログイン")').first
-                login_button.click()
-                print(f"   ✅ ログインボタンをクリック")
+            print("   ✅ パスワード入力完了")
+
+            # 次へボタン（ID: cta011）
+            submit_clicked = _click_first_visible(
+                page,
+                [
+                    "#cta011",
+                    "div#cta011[role='button']",
+                    "button:has-text('次へ')",
+                    "button[type='submit']",
+                ],
+                timeout_ms=3000,
+            )
+            if submit_clicked:
+                print("   ✅ ログイン送信ボタンをクリック")
                 time.sleep(3)
-            except Exception as e:
-                print(f"   ❌ ログインボタンが見つかりません: {e}")
-                return False
             
             # ログイン確認メール送信が必要かチェック
             page_content = page.content().lower()

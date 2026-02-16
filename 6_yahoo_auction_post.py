@@ -10,6 +10,7 @@
 import os
 import time
 import sys
+import shutil
 import re
 import glob
 import pandas as pd
@@ -52,6 +53,24 @@ logging.basicConfig(
 def log(msg, level="info"):
     """ログ出力"""
     getattr(logging, level)(msg)
+
+def cleanup_old_error_files(pattern, keep_count=6):
+    """古いエラーファイルを削除（最新keep_count個のみ残す）"""
+    try:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        files = sorted(
+            glob.glob(os.path.join(script_dir, pattern)),
+            key=os.path.getmtime,
+            reverse=True
+        )
+        if len(files) > keep_count:
+            for old_file in files[keep_count:]:
+                try:
+                    os.remove(old_file)
+                except Exception:
+                    pass
+    except Exception:
+        pass
 
 def load_brand_master():
     """ブランドマスターを読み込み、ブランドID→ブランド名の辞書を作成"""
@@ -524,6 +543,9 @@ def post_new_item(page, hinban, title, price="1000", description="", condition="
                 # 最終試行でも失敗 - デバッグ情報を保存
                 log(f"  ❌ 新規出品ページの読み込みに失敗: 現在のURL: {page.url}")
                 try:
+                    # 古いエラーファイルをクリーンアップ
+                    cleanup_old_error_files("error_new_post_*.png", keep_count=6)
+                    cleanup_old_error_files("error_new_post_*.html", keep_count=6)
                     # スクリーンショット保存
                     screenshot_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 
                                                    f"error_new_post_{hinban}_{int(time.time())}.png")
@@ -800,6 +822,10 @@ def post_new_item(page, hinban, title, price="1000", description="", condition="
                     debug_dir = os.path.dirname(os.path.abspath(__file__))
                     timestamp = int(time.time())
                     
+                    # 古いエラーファイルをクリーンアップ
+                    cleanup_old_error_files("error_submit_*.png", keep_count=6)
+                    cleanup_old_error_files("error_submit_*.html", keep_count=6)
+                    
                     # スクリーンショット
                     screenshot_path = os.path.join(debug_dir, f"error_submit_{hinban}_{timestamp}.png")
                     page.screenshot(path=screenshot_path)
@@ -822,6 +848,8 @@ def post_new_item(page, hinban, title, price="1000", description="", condition="
             try:
                 debug_dir = os.path.dirname(os.path.abspath(__file__))
                 timestamp = int(time.time())
+                # 古いエラーファイルをクリーンアップ
+                cleanup_old_error_files("error_no_submit_btn_*.png", keep_count=3)
                 screenshot_path = os.path.join(debug_dir, f"error_no_submit_btn_{hinban}_{timestamp}.png")
                 page.screenshot(path=screenshot_path)
                 log(f"  📸 スクリーンショット: {screenshot_path}")
@@ -909,6 +937,18 @@ def main():
     with sync_playwright() as p:
         # ユーザーデータを保持してブラウザを起動
         os.makedirs(USER_DATA_DIR, exist_ok=True)
+        
+        # キャッシュディレクトリを削除（ログイン情報は保持）
+        cache_dirs = ['cache2', 'shader-cache', 'ShaderCache', 'startupCache', 
+                     'GrShaderCache', 'GraphiteDawnCache']
+        for cache_dir_name in cache_dirs:
+            cache_path = os.path.join(USER_DATA_DIR, cache_dir_name)
+            if os.path.exists(cache_path):
+                try:
+                    shutil.rmtree(cache_path)
+                    log(f"🗑️ キャッシュを削除: {cache_dir_name}")
+                except Exception as e:
+                    pass
         context = p.firefox.launch_persistent_context(
             user_data_dir=USER_DATA_DIR,
             headless=False,  # ブラウザを表示

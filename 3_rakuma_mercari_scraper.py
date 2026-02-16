@@ -2,6 +2,7 @@ import os
 import glob
 import json
 import sys
+import shutil
 import threading
 import argparse
 import logging
@@ -224,7 +225,7 @@ def wait_for_manual_login(page, site_name, timeout_seconds=30, is_logged_in_func
 
 def scrape_rakuma_selling_stats():
     """ラクマの出品中商品からwatch（いいね）とaccess（閲覧数）を取得する"""
-    stats_dict = {}  # {URL: {'watch': 0, 'access': 0}}
+    stats_dict = {}  # {URL: {'watch': 0, 'access': 0, 'name': 商品名}}
     try:
         # user_data_dirを絶対パスに変更
         script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -374,6 +375,12 @@ def scrape_rakuma_selling_stats():
                         if not item_url.startswith('http'):
                             item_url = urljoin('https://item.fril.jp', item_url)
                         
+                        # 商品名
+                        name = ""
+                        name_tag = item.find('h4', class_=re.compile(r'deal-item__heading'))
+                        if name_tag:
+                            name = name_tag.get_text(strip=True)
+
                         # いいね数（watch）
                         watch = 0
                         watch_tag = item.find('span', {'data-test': 'item_like_count'})
@@ -392,11 +399,13 @@ def scrape_rakuma_selling_stats():
                             if access_match:
                                 access = int(access_match.group(1))
                         
-                        stats_dict[item_url] = {'watch': watch, 'access': access}
+                        stats_dict[item_url] = {'watch': watch, 'access': access, 'name': name}
                         
                         # 最初の3件をデバッグ出力
                         if idx < 3 and total_items <= 3:
-                            logger.info(f"  [デバッグ] 商品 {idx+1}: URL={item_url[:50]}..., watch={watch}, access={access}")
+                            logger.info(
+                                f"  [デバッグ] 商品 {idx+1}: URL={item_url[:50]}..., name={name[:20]}..., watch={watch}, access={access}"
+                            )
                         
                     except Exception as e:
                         logger.warning(f"  商品のwatch/access取得エラー: {e}")
@@ -509,6 +518,18 @@ def scrape_mercari_shops_stats():
         # user_data_dirを絶対パスに変更してログイン情報を保存
         script_dir = os.path.dirname(os.path.abspath(__file__))
         user_data_dir = os.path.join(script_dir, 'mercari_shops_user_data')
+        
+        # キャッシュディレクトリを削除（ログイン情報は保持）
+        cache_dirs = ['cache2', 'shader-cache', 'ShaderCache', 'startupCache', 
+                     'GrShaderCache', 'GraphiteDawnCache']
+        for cache_dir_name in cache_dirs:
+            cache_path = os.path.join(user_data_dir, cache_dir_name)
+            if os.path.exists(cache_path):
+                try:
+                    shutil.rmtree(cache_path)
+                    logger.info(f"🗑️ キャッシュを削除: {cache_dir_name}")
+                except Exception as e:
+                    logger.warning(f"⚠️ キャッシュ削除エラー ({cache_dir_name}): {e}")
 
         with sync_playwright() as p:
             logger.info("メルカリショップスの公開商品情報を取得中... (Firefox)")
@@ -1048,8 +1069,22 @@ def move_to_draft_auto(draft_urls):
                 logger.info(f"[{idx}/{len(edit_urls)}] 処理中: {url}")
                 
                 try:
-                    # 商品編集ページにアクセス
-                    page.goto(url, timeout=30000, wait_until='domcontentloaded')
+                    # 商品編集ページにアクセス（ナビゲーション競合対策でリトライ）
+                    for attempt in range(2):
+                        try:
+                            page.wait_for_load_state('domcontentloaded', timeout=10000)
+                            page.goto(url, timeout=30000, wait_until='domcontentloaded')
+                            break
+                        except Exception as e:
+                            if "interrupted by another navigation" in str(e) and attempt == 0:
+                                logger.warning("  ⚠️ ナビゲーション競合のため再試行します")
+                                try:
+                                    page.wait_for_load_state('domcontentloaded', timeout=10000)
+                                except Exception:
+                                    pass
+                                time.sleep(1)
+                                continue
+                            raise
                     time.sleep(2)
                     
                     current_url = page.url
@@ -1081,7 +1116,17 @@ def move_to_draft_auto(draft_urls):
                         success_count += 1
                         continue
                     
-                    # 確認ボタンをクリック
+                    # 「確認する」ボタンがある場合はクリック
+                    try:
+                        confirm_pre_button = page.locator('button:has-text("確認する")').first
+                        if confirm_pre_button.count() > 0:
+                            confirm_pre_button.click(timeout=5000)
+                            logger.info("  📝 「確認する」をクリック")
+                            time.sleep(1)
+                    except Exception:
+                        pass
+
+                    # 確認ボタンをクリック（モーダル内）
                     time.sleep(1)
                     try:
                         confirm_button = page.locator('button:has-text("下書きに戻す")').first
@@ -1089,6 +1134,11 @@ def move_to_draft_auto(draft_urls):
                             confirm_button.click(timeout=5000)
                             logger.info(f"  ✅ 下書きに移動しました")
                             success_count += 1
+                            # 遷移完了を待機（draft への遷移が完了するまで）
+                            try:
+                                page.wait_for_load_state('domcontentloaded', timeout=10000)
+                            except Exception:
+                                pass
                             time.sleep(2)
                         else:
                             logger.warning(f"  ⚠️ 確認ボタンが見つかりません")
@@ -1161,27 +1211,28 @@ def main():
         session = build_requests_session(headers)
 
         for url, stats_info in rakuma_stats.items():
-            name = ''
-            try:
-                # 軽い GET でタイトルを取得（タイムアウト短め）
-                resp = session.get(url, timeout=5)
-                if resp.status_code == 200:
-                    from bs4 import BeautifulSoup
-                    soup = BeautifulSoup(resp.content, 'html.parser')
-                    # 優先: og:title -> data-test item_name -> title
-                    og = soup.find('meta', property='og:title')
-                    if og and og.get('content'):
-                        name = og.get('content')
-                    else:
-                        name_tag = soup.find(attrs={'data-test': 'item_name'})
-                        if name_tag:
-                            name = name_tag.get_text(strip=True)
+            name = stats_info.get('name', '')
+            if not name:
+                try:
+                    # 軽い GET でタイトルを取得（タイムアウト短め）
+                    resp = session.get(url, timeout=5)
+                    if resp.status_code == 200:
+                        from bs4 import BeautifulSoup
+                        soup = BeautifulSoup(resp.content, 'html.parser')
+                        # 優先: og:title -> data-test item_name -> title
+                        og = soup.find('meta', property='og:title')
+                        if og and og.get('content'):
+                            name = og.get('content')
                         else:
-                            if soup.title and soup.title.string:
-                                name = soup.title.string.strip()
-            except Exception:
-                # 取得失敗でも続行（空の name でも問題ない）
-                name = ''
+                            name_tag = soup.find(attrs={'data-test': 'item_name'})
+                            if name_tag:
+                                name = name_tag.get_text(strip=True)
+                            else:
+                                if soup.title and soup.title.string:
+                                    name = soup.title.string.strip()
+                except Exception:
+                    # 取得失敗でも続行（空の name でも問題ない）
+                    name = ''
 
             name = clean_rakuma_title(name)
 
