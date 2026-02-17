@@ -32,9 +32,12 @@ __pycache__/
 
 # 環境変数
 .env
+config.py
+base_token.json
 
 # logs / build
 *.log
+stock_sync_log.txt
 dist/
 build/
 
@@ -48,3 +51,27 @@ rakuma_user_data/
 yahoo_user_data/
 **/Cache/
 **/Cache_Data/
+
+# Playwright ブラウザキャッシュ
+**/cache2/
+**/shader-cache/
+**/ShaderCache/
+**/startupCache/
+**/GrShaderCache/
+**/GraphiteDawnCache/
+**/extensions/
+**/extension-store/
+**/extensions_crx_cache/
+
+# User data directories
+**/rakuma_user_data*/
+**/yahooku_user_data*/
+**/mercari_*user_data*/
+**/yahoofleama_user_data*/
+**/yahoo_user_data*/
+**/rakuten_user_data*/
+
+# エラー画面スクリーンショット
+error_*.png
+error_*.html
+error_artifacts/

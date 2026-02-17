@@ -1,2 +1,3 @@
-2026/02/14-02:19:02.406 2cdc Creating DB C:\Users\progr\Desktop\Python\mercari_dorekai\mercari_user_data\Default\GCM Store\Encryption since it was missing.
-2026/02/14-02:19:02.443 2cdc Reusing MANIFEST C:\Users\progr\Desktop\Python\mercari_dorekai\mercari_user_data\Default\GCM Store\Encryption/MANIFEST-000001
+2026/02/17-18:54:59.567 5d50 Reusing MANIFEST C:\Users\progr\Desktop\Python\mercari_dorekai\mercari_user_data\Default\GCM Store\Encryption/MANIFEST-000001
+2026/02/17-18:54:59.568 5d50 Recovering log #3
+2026/02/17-18:54:59.568 5d50 Reusing old log C:\Users\progr\Desktop\Python\mercari_dorekai\mercari_user_data\Default\GCM Store\Encryption/000003.log 

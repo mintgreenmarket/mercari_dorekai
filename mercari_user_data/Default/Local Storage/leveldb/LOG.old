@@ -1,3 +1,6 @@
-2026/02/16-19:29:29.178 52a8 Reusing MANIFEST C:\Users\progr\Desktop\Python\mercari_dorekai\mercari_user_data\Default\Local Storage\leveldb/MANIFEST-000001
-2026/02/16-19:29:29.184 52a8 Recovering log #56
-2026/02/16-19:29:29.186 52a8 Reusing old log C:\Users\progr\Desktop\Python\mercari_dorekai\mercari_user_data\Default\Local Storage\leveldb/000056.log 
+2026/02/17-09:10:05.801 4210 Reusing MANIFEST C:\Users\progr\Desktop\Python\mercari_dorekai\mercari_user_data\Default\Local Storage\leveldb/MANIFEST-000001
+2026/02/17-09:10:05.812 4210 Recovering log #56
+2026/02/17-09:10:05.908 4210 Reusing old log C:\Users\progr\Desktop\Python\mercari_dorekai\mercari_user_data\Default\Local Storage\leveldb/000056.log 
+2026/02/17-09:11:06.022 7500 Level-0 table #60: started
+2026/02/17-09:11:06.028 7500 Level-0 table #60: 20109 bytes OK
+2026/02/17-09:11:06.035 7500 Delete type=0 #56
