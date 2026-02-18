@@ -1,15 +1,15 @@
 {
   "year_month": "2026-02",
-  "total_sales": 101000,
-  "total_count": 31,
+  "total_sales": 118500,
+  "total_count": 34,
   "by_site": {
     "ラクマ": {
-      "sales": 20000,
-      "count": 7
+      "sales": 27000,
+      "count": 8
     },
     "メルカリ": {
-      "sales": 81000,
-      "count": 24
+      "sales": 91500,
+      "count": 26
     },
     "ヤフオク": {
       "sales": 0,

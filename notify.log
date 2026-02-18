@@ -384,3 +384,8 @@
 2026-02-16 12:00:05,819 - INFO - Found new order from メルカリ (UID: 1252)
 2026-02-16 12:00:06,050 - INFO - LINE API Response: Status 200, Body: {"sentMessages":[{"id":"601261028986847687","quoteToken":"j5qVUxcPnhQdjsa9figH6kAH01l_SnnURIeVEEs-9S3BOjUT_SfoGkVkednTSUf1vX7abX3pE_rMoP__gFVy--0Rkze2u7SCz9YjJol9aqqqXXRZYRtUlMp8iQCxZTkzKbBiU503ED3pwgjIsMjeZw"}]}
 2026-02-16 12:00:06,054 - INFO - LINEに1件の注文を通知しました。メールを既読にします。
+2026-02-18 09:00:07,518 - INFO - Found new order from ラクマ (UID: 1282)
+2026-02-18 09:00:08,816 - INFO - Found new order from メルカリ (UID: 1285)
+2026-02-18 09:00:09,719 - INFO - Found new order from メルカリ (UID: 1287)
+2026-02-18 09:00:10,754 - INFO - LINE API Response: Status 200, Body: {"sentMessages":[{"id":"601532828491972696","quoteToken":"8-E3MCqaDNbNgTjgUMohOtkmATWNCuwcy09vpDjza_XbDnEbzFAlodx1p4YECPaI4QJkC9lo6fJXylzVJos87kkGYiCq8ojabE24FSHr6WpTXQq2OQqIAZl4TDcK0nDfUxfvxAtA55NNWyG4irYMJg"}]}
+2026-02-18 09:00:10,754 - INFO - LINEに3件の注文を通知しました。メールを既読にします。
