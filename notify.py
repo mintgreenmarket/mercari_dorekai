@@ -197,6 +197,72 @@ def extract_base_info(body):
         price = m.group(1).replace(',', '') + "円"
     return order_no, product, price
 
+def extract_base_details(body):
+    """BASEショップのメール本文から詳細情報を抽出する"""
+    order_no, product, price = extract_base_info(body)
+    product_url = None
+    quantity = None
+    subtotal = None
+    shipping = None
+    total = None
+    payment_method = None
+    billing_email = None
+    order_detail_url = None
+
+    # 商品URL
+    m = re.search(r"(https?://[^\s]+/items/\d+)", body)
+    if m:
+        product_url = m.group(1)
+
+    # 個数
+    m = re.search(r"個数\s*[:：]\s*(\d+)", body)
+    if m:
+        quantity = m.group(1) + "個"
+
+    # 小計
+    m = re.search(r"小計\s*[:：]\s*([\d,]+)円", body)
+    if m:
+        subtotal = m.group(1).replace(',', '') + "円"
+
+    # 送料
+    m = re.search(r"送料\s*[:：]\s*([\d,]+)円", body)
+    if m:
+        shipping = m.group(1).replace(',', '') + "円"
+
+    # 合計金額
+    m = re.search(r"合計金額\s*[:：]\s*([\d,]+)円", body)
+    if m:
+        total = m.group(1).replace(',', '') + "円"
+
+    # 決済方法
+    m = re.search(r"決済方法\s*[\r\n]+\s*([^\r\n]+)", body)
+    if m:
+        payment_method = m.group(1).strip()
+
+    # ご請求先メールアドレス
+    m = re.search(r"ご請求先メールアドレス\s*[:：]\s*([^\s]+)", body)
+    if m:
+        billing_email = m.group(1)
+
+    # 注文詳細URL
+    m = re.search(r"(https?://admin\.thebase\.com/order/detail/[A-Z0-9]+)", body)
+    if m:
+        order_detail_url = m.group(1)
+
+    return {
+        "order_no": order_no,
+        "product": product,
+        "price": price,
+        "product_url": product_url,
+        "quantity": quantity,
+        "subtotal": subtotal,
+        "shipping": shipping,
+        "total": total,
+        "payment_method": payment_method,
+        "billing_email": billing_email,
+        "order_detail_url": order_detail_url,
+    }
+
 def get_email_body(msg):
     """Extracts the text body from an email message."""
     body = ""
@@ -224,8 +290,8 @@ def decode_subject(msg):
 SITE_CONFIGS = [
     {
         "name": "BASE",
-        "subject_keywords": ["商品購入通知", "BASEショップ"],
-        "extractor": lambda body: extract_base_info(body),
+        "subject_keywords": ["商品購入通知", "BASEショップにて商品が購入されました"],
+        "extractor": lambda body: extract_base_details(body),
         "processed_uids_file": BASE_PROCESSED_UIDS_FILE,
     },
     {
@@ -310,13 +376,58 @@ def check_and_notify():
                     log(f"Found new order from {config['name']} (UID: {uid})")
 
                     body = get_email_body(msg)
-                    order_no, product, price = config["extractor"](body)                    
+                    extracted = config["extractor"](body)
+                    base_details = None
+                    if isinstance(extracted, dict):
+                        order_no = extracted.get("order_no")
+                        product = extracted.get("product")
+                        price = extracted.get("price")
+                        base_details = extracted
+                    else:
+                        order_no, product, price = extracted
 
                     # 通知メッセージを作成
-                    individual_message = f"{config['name']}注文通知"
-                    individual_message += f"\n受信時刻: {received_time_str}"
-                    if product: individual_message += f"\n商品名: {product}"                    
-                    if price: individual_message += f"\n価格: {price}"
+                    if config['name'] == "BASE" and base_details:
+                        individual_message = "商品購入通知：BASEショップにて商品が購入されました。"
+                        individual_message += "\n\nドレ買いで商品が購入されました。\n\n"
+                        individual_message += "============================================================\n"
+                        individual_message += "ご注文内容\n"
+                        individual_message += "============================================================"
+                        if order_no: individual_message += f"\n注文ID : {order_no}"
+                        if product: individual_message += f"\n\n商品名 : {product}"
+                        if base_details.get("product_url"):
+                            individual_message += f"\n{base_details['product_url']}"
+                        if price: individual_message += f"\n価格 : {price}"
+                        if base_details.get("quantity"):
+                            individual_message += f"\n個数 : {base_details['quantity']}"
+                        if base_details.get("subtotal"):
+                            individual_message += f"\n小計 : {base_details['subtotal']}"
+                        if base_details.get("shipping"):
+                            individual_message += f"\n\n送料 : {base_details['shipping']}"
+                        if base_details.get("total"):
+                            individual_message += f"\n合計金額 : {base_details['total']}"
+                        individual_message += "\n\n============================================================\n"
+                        individual_message += "決済方法\n"
+                        individual_message += "============================================================"
+                        if base_details.get("payment_method"):
+                            individual_message += f"\n{base_details['payment_method']}"
+                        individual_message += "\n\n============================================================\n"
+                        individual_message += "お届け先・ご請求先情報\n"
+                        individual_message += "============================================================"
+                        if base_details.get("billing_email"):
+                            individual_message += f"\nご請求先メールアドレス : {base_details['billing_email']}"
+                        individual_message += "\n個人情報のため、ログインしていただき、以下URLよりご確認ください。"
+                        if base_details.get("order_detail_url"):
+                            individual_message += f"\n{base_details['order_detail_url']}"
+                        individual_message += "\n\n============================================================\n"
+                        individual_message += "備考\n"
+                        individual_message += "============================================================\nなし"
+                    else:
+                        individual_message = f"{config['name']}注文通知"
+                        individual_message += f"\n受信時刻: {received_time_str}"
+                        if order_no: individual_message += f"\n注文ID: {order_no}"
+                        if product: individual_message += f"\n商品名: {product}"
+                        if price: individual_message += f"\n価格: {price}"
                     
                     # 月次統計を更新
                     monthly_stats = update_monthly_stats(monthly_stats, config['name'], price)
