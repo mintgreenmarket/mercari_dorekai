@@ -27,6 +27,32 @@ USER_DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "yahook
 IMAGE_DIR = r"\\LS210DNBD82\share\平良\Python\mercari_dorekai\mercari_images"
 BRAND_MASTER_CSV = os.path.join(os.path.dirname(os.path.abspath(__file__)), "brand_master_sjis.csv")
 
+# ブランドID除外リスト（件数が5以上でも除外）
+# 例: ["123", "456"]
+BRAND_ID_DENYLIST = [
+    "ivXuyumG4x5SdzKFYNM4XA",  # Andy / アンディ
+    "wTeuTUq5a5wHQhXnSztosh",  # an / アン
+    "eYdcGJ4ebibmdNzf7ktdqj",  # ROBE de FLEURS / ローブドフルール
+    "VhxiMfWSScWTSg3gFzB2YD",  # RINASCIMENTO / リナシメント
+    "58iAExviYX2Cug3uZuYi7d",  # AngelR / エンジェルアール
+    "GL3FbnhCVVnehHb3oiNJqm",  # BayBClub / ベイビークラブ
+    "sKLywZGhKy4tE5ZH7F36cj",  # LIPSY LONDON / リプシーロンドン
+    "vEQUgGNjsxXXLxjfFQ64JK",  # FEIMAN / フェイマン
+]
+
+# ブランドID許可リスト（件数が5未満でも許可）
+# 例: ["ABC123", "XYZ999"]
+BRAND_ID_ALLOWLIST = [
+    "5VtffAUpwy5VfpyKaTEnFG",  # Ralph Lauren / ラルフローレン
+    "RVQyATJ43rwro8cFMwB535",  # Guess / ゲス
+]
+
+# ブランド名の特殊一致（メルカリ名 -> ヤフオク名）
+# 例: "Ralph Lauren" -> "POLO RALPH LAUREN"
+BRAND_NAME_OVERRIDES = {
+    "Ralph Lauren": "POLO RALPH LAUREN",
+}
+
 # ログファイル
 PROCESSED_RELIST_LOG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "processed_relist_ids.txt")
 POSTED_HINBAN_LOG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "posted_hinban_history.txt")
@@ -53,6 +79,56 @@ logging.basicConfig(
 def log(msg, level="info"):
     """ログ出力"""
     getattr(logging, level)(msg)
+
+def clear_drafts(page, max_clear=5):
+    """下書きを削除する（最大max_clear件）"""
+    try:
+        draft_url = "https://auctions.yahoo.co.jp/sell/draft"
+        log(f"  📋 下書き管理ページへ移動: {draft_url}")
+        page.goto(draft_url, wait_until="domcontentloaded", timeout=60000)
+        time.sleep(3)
+        
+        cleared_count = 0
+        for i in range(max_clear):
+            # 下書きの削除ボタンを探す（複数のパターンを試行）
+            delete_buttons = page.query_selector_all(
+                "button[title*='削除'], a[title*='削除'], button:has-text('削除'), a:has-text('削除'), "
+                "[class*='delete']:has-text('削除'), [class*='Delete']:has-text('削除')"
+            )
+            
+            if not delete_buttons:
+                log(f"  ℹ️ これ以上削除できる下書きが見つかりません（{cleared_count}件削除済み）")
+                break
+            
+            # 最初の下書きを削除
+            try:
+                delete_buttons[0].click()
+                time.sleep(1)
+                
+                # 確認ダイアログの「削除」「OK」ボタンをクリック
+                confirm_button = page.query_selector("button:has-text('削除'), input[value='削除'], button:has-text('OK'), input[value='OK']")
+                if confirm_button:
+                    confirm_button.click()
+                    time.sleep(1)
+                    cleared_count += 1
+                    log(f"  ✅ 下書き {i+1} を削除しました")
+                else:
+                    log(f"  ⚠️ 確認ダイアログのボタンが見つかりません")
+                    break
+            except Exception as e:
+                log(f"  ⚠️ 下書き削除エラー: {str(e)[:80]}", level="warning")
+                break
+        
+        if cleared_count > 0:
+            log(f"  ✅ 合計 {cleared_count} 件の下書きを削除しました")
+            return True
+        else:
+            log(f"  ℹ️ 削除可能な下書きが見つかりませんでした")
+            return False
+            
+    except Exception as e:
+        log(f"  ❌ 下書き削除処理エラー: {str(e)[:100]}", level="error")
+        return False
 
 def cleanup_old_error_files(pattern, keep_count=6):
     """古いエラーファイルを削除（最新keep_count個のみ残す）"""
@@ -114,6 +190,125 @@ def load_brand_master():
         log(f"⚠️ ブランドマスター読み込みエラー: {e}", level="warning")
         return {}
 
+def normalize_brand_id(raw_value):
+    """ブランドIDを文字列に正規化"""
+    if raw_value is None or (isinstance(raw_value, float) and pd.isna(raw_value)):
+        return ""
+    value = str(raw_value).strip()
+    if value.endswith(".0"):
+        value = value[:-2]
+    return value
+
+def get_allowed_brand_ids_from_df(df, min_count=5):
+    """CSV内で一定件数以上のブランドIDのみ許可"""
+    if "ブランドID" not in df.columns:
+        log("⚠️ CSVにブランドID列がありません", level="warning")
+        return set()
+    series = df["ブランドID"].dropna().map(normalize_brand_id)
+    series = series[series != ""]
+    counts = series.value_counts()
+    allowed = set(counts[counts >= min_count].index.tolist())
+    allowlist = set(map(str, BRAND_ID_ALLOWLIST))
+    if allowlist:
+        allowed |= allowlist
+        log(f"✅ ブランドID追加数: {len(allowlist)} 件（許可リスト適用）")
+    denylist = set(map(str, BRAND_ID_DENYLIST))
+    if denylist:
+        allowed -= denylist
+        log(f"✅ ブランドID除外数: {len(denylist)} 件（除外リスト適用）")
+    log(f"✅ ブランドID許可数: {len(allowed)} 件（{min_count}件以上）")
+    return allowed
+
+def input_brand_if_allowed(page, brand_id):
+    """ブランドIDが許可対象なら入力を行う"""
+    if not brand_id:
+        return
+    try:
+        brand_master = load_brand_master()
+        brand_name = brand_master.get(brand_id, "")
+        brand_name = BRAND_NAME_OVERRIDES.get(brand_name, brand_name)
+
+        if not brand_name:
+            log(f"  ℹ️ ブランドID {brand_id} はマスタに存在しません", level="info")
+            return
+
+        log(f"  🏷️ ブランド入力中: {brand_name}")
+        brand_input = page.query_selector("input#brand_line_text")
+        if not brand_input:
+            log("  ⚠️ ブランド入力欄が見つかりません", level="warning")
+            return
+
+        # フィールドをクリックしてフォーカス
+        brand_input.click()
+        time.sleep(0.3)
+
+        # 既存の値をクリア（Ctrl+Aで全選択して削除）
+        brand_input.press("Control+A")
+        brand_input.press("Backspace")
+        time.sleep(0.3)
+
+        # ブランド名を1文字ずつタイピング（人間のように）
+        log(f"  ✏️ 入力中: {brand_name}")
+        brand_input.type(brand_name, delay=100)
+        time.sleep(1.5)  # AutoCompleteの表示を待つ
+
+        # AutoCompleteのリストが表示されるまで待つ
+        try:
+            page.wait_for_selector(".AutoComplete__items li", timeout=5000)
+            time.sleep(0.5)  # 追加待機
+
+            # 全ての候補を取得
+            all_items = page.query_selector_all(".AutoComplete__items li")
+            log(f"  🔍 候補数: {len(all_items)}件")
+
+            # 完全一致（大文字/小文字は無視）を探す
+            matched_item = None
+            brand_name_norm = brand_name.lower()
+            for item_el in all_items:
+                item_text = item_el.text_content().strip()
+                if item_text.lower() == brand_name_norm:
+                    matched_item = item_el
+                    log(f"  ✅ 完全一致見つかりました: {item_text}")
+                    break
+
+            # 完全一致がなければ選択しない
+            if not matched_item:
+                log("  ℹ️ 完全一致がないためブランド選択をスキップ", level="info")
+                return
+
+            if matched_item:
+                matched_text = matched_item.text_content().strip()
+                # JavaScriptでクリックイベントを発火
+                page.evaluate("""(element) => {
+                    element.click();
+                    element.dispatchEvent(new MouseEvent('mousedown', {bubbles: true}));
+                    element.dispatchEvent(new MouseEvent('mouseup', {bubbles: true}));
+                }""", matched_item)
+                time.sleep(1.5)  # 待機時間を延長
+
+                # 選択が成功したか確認
+                brand_line_id_input = page.query_selector("input#brand_line_id")
+                brand_text_input = page.query_selector("input#brand_line_text")
+
+                if brand_line_id_input and brand_line_id_input.get_attribute("value"):
+                    # テキストフィールドに値が設定されているか確認
+                    text_value = brand_text_input.get_attribute("value") if brand_text_input else ""
+                    if not text_value or text_value == "":
+                        # 明示的にテキストフィールドに値を設定
+                        log("  ℹ️ テキストフィールドが空のため、明示的に設定します")
+                    matched_text_escaped = matched_text.replace("\\", "\\\\").replace("'", "\\'")
+                    brand_text_input.evaluate(f"""
+                        (input) => {{
+                            input.value = '{matched_text_escaped}';
+                        }}
+                    """)
+            else:
+                log("  ℹ️ ブランド候補が見つかりません", level="info")
+        except Exception:
+            log("  ℹ️ ブランド自動補完が表示されませんでした", level="info")
+    except Exception as e:
+        log(f"  ⚠️ ブランド入力エラー: {str(e)[:80]}", level="warning")
+
 def load_processed_ids(log_file):
     """処理済みIDをファイルから読み込む"""
     if not os.path.exists(log_file):
@@ -127,16 +322,32 @@ def save_processed_id(item_id, log_file):
         f.write(f"{item_id}\n")
 
 def load_posted_hinban(log_file):
-    """出品済み品番を読み込む"""
+    """出品済み品番を読み込む（正規化済み）"""
     if not os.path.exists(log_file):
         return set()
+    posted = set()
     with open(log_file, "r", encoding="utf-8") as f:
-        return {line.strip() for line in f if line.strip()}
+        for line in f:
+            hinban = line.strip()
+            # 正規化（以前の記録も含めて統一）
+            normalized = normalize_hinban(hinban)
+            if normalized:
+                posted.add(normalized)
+    return posted
 
 def save_posted_hinban(hinban, log_file):
     """出品済み品番を追記"""
+    # 品番を正規化（前ゼロを除去して統一）
+    normalized_hinban = str(hinban).lstrip('0') or '0'
     with open(log_file, "a", encoding="utf-8") as f:
-        f.write(f"{hinban}\n")
+        f.write(f"{normalized_hinban}\n")
+
+def normalize_hinban(hinban):
+    """品番を正規化（前ゼロ除去、空の場合は0）"""
+    if not hinban or hinban == 'nan':
+        return None
+    normalized = str(hinban).strip().lstrip('0') or '0'
+    return normalized if len(normalized) > 1 else None  # 1桁は除外
 
 def wait_for_items(page):
     """商品リストが表示されるまで待機"""
@@ -246,6 +457,7 @@ def get_new_post_candidates():
     
     try:
         df = pd.read_csv(csv_path, encoding='shift_jis')
+        allowed_brand_ids = get_allowed_brand_ids_from_df(df, min_count=5)
         posted_hinban = load_posted_hinban(POSTED_HINBAN_LOG)
         
         log(f"📁 使用するCSV: {os.path.basename(csv_path)}")
@@ -278,10 +490,20 @@ def get_new_post_candidates():
                     hinban = title_match.group(1)
             else:
                 hinban = title_match.group(1)
+            
+            # 品番を正規化
+            hinban = normalize_hinban(hinban)
+            if not hinban:
+                continue
+                
             price = str(row.get('販売価格', '')) if '販売価格' in df.columns else "1000"
             description = str(row.get('商品説明', '')) if '商品説明' in df.columns else ""
             condition = str(row.get('商品の状態', '')) if '商品の状態' in df.columns else ""
-            brand_id = str(row.get('ブランドID', '')) if 'ブランドID' in df.columns and pd.notna(row.get('ブランドID')) else ""
+            brand_id = ""
+            if 'ブランドID' in df.columns and pd.notna(row.get('ブランドID')):
+                brand_id = normalize_brand_id(row.get('ブランドID', ''))
+                if brand_id and brand_id not in allowed_brand_ids:
+                    brand_id = ""
             
             # 価格を数値に変換（カンマ除去、空の場合は1000円）
             try:
@@ -293,7 +515,6 @@ def get_new_post_candidates():
                 hinban
                 and hinban not in posted_hinban
                 and hinban not in seen_hinban
-                and hinban != 'nan'
             ):
                 candidates.append({
                     'hinban': hinban,
@@ -347,6 +568,7 @@ def relist_item(page, auction_id, hinban_hint=None):
                 csv_path = get_latest_product_csv()
                 if csv_path:
                     df = pd.read_csv(csv_path, encoding='shift_jis')
+                    allowed_brand_ids = get_allowed_brand_ids_from_df(df, min_count=5)
                     # 品番が一致する行を探す
                     for idx, row in df.iterrows():
                         csv_hinban = str(row.get('品番', ''))
@@ -406,6 +628,14 @@ def relist_item(page, auction_id, hinban_hint=None):
                             except Exception as e:
                                 log(f"  ⚠️ 説明更新エラー: {e}")
                             
+                            # ブランドを更新（許可リスト適用）
+                            brand_id = ""
+                            if 'ブランドID' in df.columns and pd.notna(row.get('ブランドID')):
+                                brand_id = normalize_brand_id(row.get('ブランドID', ''))
+                                if brand_id and brand_id not in allowed_brand_ids:
+                                    brand_id = ""
+                            input_brand_if_allowed(page, brand_id)
+
                             break
             except Exception as e:
                 log(f"  ⚠️ CSVから情報取得エラー: {e}")
@@ -431,14 +661,28 @@ def relist_item(page, auction_id, hinban_hint=None):
             final_submit.click()
             log("  ✅ 出品しました")
 
-            # 完了を待つ
+            # 完了を待つ（完了メッセージの表示を検出）
             try:
-                page.wait_for_url(lambda url: "show/complete" in url or "my/selling" in url, timeout=30000)
+                page.wait_for_selector(
+                    "text=/出品手続きが完了しました|出品が完了しました|ご利用ありがとうございました/",
+                    timeout=30000
+                )
+                log(f"  ✅ {auction_id} の再出品完了（全情報更新）")
+                return True
             except:
-                pass
-            
-            log(f"  ✅ {auction_id} の再出品完了（全情報更新）")
-            return True
+                # タイムアウト後もメッセージで確認
+                page_text = page.content()
+                if "出品手続きが完了しました" in page_text or "出品が完了しました" in page_text:
+                    log(f"  ✅ {auction_id} の再出品完了（タイムアウト後に確認）")
+                    return True
+                
+                # URL遷移でも確認（念のため）
+                if "show/complete" in page.url or "my/selling" in page.url:
+                    log(f"  ✅ {auction_id} の再出品完了（URL遷移で確認）")
+                    return True
+                
+                log(f"  ⚠️ {auction_id} の再出品完了確認できず", level="warning")
+                return False
 
     except Exception as e:
         log(f"  ❌ 再出品エラー: {e}", level="error")
@@ -635,90 +879,7 @@ def post_new_item(page, hinban, title, price="1000", description="", condition="
             log(f"  ✅ タイトル入力完了: {title[:30]}")
 
         # ブランド入力
-        if brand_id:
-            try:
-                brand_master = load_brand_master()
-                brand_name = brand_master.get(brand_id, '')
-                
-                if brand_name:
-                    log(f"  🏷️ ブランド入力中: {brand_name}")
-                    brand_input = page.query_selector("input#brand_line_text")
-                    if brand_input:
-                        # フィールドをクリックしてフォーカス
-                        brand_input.click()
-                        time.sleep(0.3)
-                        
-                        # 既存の値をクリア（Ctrl+Aで全選択して削除）
-                        brand_input.press('Control+A')
-                        brand_input.press('Backspace')
-                        time.sleep(0.3)
-                        
-                        # ブランド名を1文字ずつタイピング（人間のように）
-                        log(f"  ✏️ 入力中: {brand_name}")
-                        brand_input.type(brand_name, delay=100)  # 100msの遅延でタイピング
-                        time.sleep(1.5)  # AutoCompleteの表示を待つ
-                        
-                        # AutoCompleteのリストが表示されるまで待つ
-                        try:
-                            page.wait_for_selector(".AutoComplete__items li", timeout=5000)
-                            time.sleep(0.5)  # 追加待機
-                            
-                            # 全ての候補を取得
-                            all_items = page.query_selector_all(".AutoComplete__items li")
-                            log(f"  🔍 候補数: {len(all_items)}件")
-                            
-                            # 完全一致を探す
-                            matched_item = None
-                            for item_el in all_items:
-                                item_text = item_el.text_content().strip()
-                                if item_text == brand_name:
-                                    matched_item = item_el
-                                    log(f"  ✅ 完全一致見つかりました: {item_text}")
-                                    break
-                            
-                            # 完全一致がなければ最初の候補を使用
-                            if not matched_item and all_items:
-                                matched_item = all_items[0]
-                                log(f"  ℹ️ 完全一致なし、最初の候補を使用: {matched_item.text_content().strip()}")
-                            
-                            if matched_item:
-                                matched_text = matched_item.text_content().strip()
-                                # JavaScriptでクリックイベントを発火
-                                page.evaluate("""(element) => {
-                                    element.click();
-                                    element.dispatchEvent(new MouseEvent('mousedown', {bubbles: true}));
-                                    element.dispatchEvent(new MouseEvent('mouseup', {bubbles: true}));
-                                }""", matched_item)
-                                time.sleep(1.5)  # 待機時間を延長
-                                
-                                # 選択が成功したか確認
-                                brand_line_id_input = page.query_selector("input#brand_line_id")
-                                brand_text_input = page.query_selector("input#brand_line_text")
-                                
-                                if brand_line_id_input and brand_line_id_input.get_attribute("value"):
-                                    selected_id = brand_line_id_input.get_attribute("value")
-                                    
-                                    # テキストフィールドに値が設定されているか確認
-                                    text_value = brand_text_input.get_attribute("value") if brand_text_input else ""
-                                    if not text_value or text_value == "":
-                                        # 明示的にテキストフィールドに値を設定
-                                        log(f"  ℹ️ テキストフィールドが空のため、明示的に設定します")
-                                    matched_text_escaped = matched_text.replace("\\", "\\\\").replace("'", "\\'")
-                                    brand_text_input.evaluate(f"""
-                                        (input) => {{
-                                            input.value = '{matched_text_escaped}';
-                                        }}
-                                    """)
-                            else:
-                                log(f"  ℹ️ ブランド候補が見つかりません", level="info")
-                        except:
-                            log(f"  ℹ️ ブランド自動補完が表示されませんでした", level="info")
-                    else:
-                        log(f"  ⚠️ ブランド入力欄が見つかりません", level="warning")
-                else:
-                    log(f"  ℹ️ ブランドID {brand_id} はマスタに存在しません", level="info")
-            except Exception as e:
-                log(f"  ⚠️ ブランド入力エラー: {str(e)[:80]}", level="warning")
+        input_brand_if_allowed(page, brand_id)
 
         # 商品説明を入力
         if description and description != 'nan':
@@ -769,6 +930,16 @@ def post_new_item(page, hinban, title, price="1000", description="", condition="
         # スクロール
         page.evaluate("window.scrollTo(0, document.body.scrollHeight);")
         time.sleep(1)
+        
+        # 下書きに保存するチェックボックスを確実にOFFにする
+        try:
+            draft_checkboxes = page.query_selector_all('input[type="checkbox"][name*="draft"], input[type="checkbox"][name*="Draft"]')
+            for checkbox in draft_checkboxes:
+                if checkbox.is_checked():
+                    checkbox.uncheck()
+                    log(f"  💡 下書き保存チェックをOFFにしました")
+        except Exception as e:
+            pass  # チェックボックスがなければスキップ
 
         # 「確認画面へ」ボタン
         confirm_button = page.query_selector("#submit_form_btn")
@@ -781,33 +952,83 @@ def post_new_item(page, hinban, title, price="1000", description="", condition="
             current_url = page.url
             log(f"  🔍 現在のURL: {current_url}")
             
-            # エラーメッセージの確認
+            # ページ内の全てのボタンを確認（デバッグ用）
+            all_buttons = page.query_selector_all("button, input[type='submit'], input[type='button']")
+            log(f"  🔍 確認画面のボタン数: {len(all_buttons)}個")
+            
+            # エラーメッセージの確認（警告表示のみ）
             error_msgs = page.query_selector_all(".error, .ErrorMessage, .Warning__text, [class*='error'], [class*='Error']")
             if error_msgs:
                 for msg in error_msgs[:3]:  # 最初の3つまで
                     error_text = msg.text_content().strip()
-                    if error_text:
+                    if error_text and "下書き" not in error_text:  # 下書き関連以外のエラーのみ表示
                         log(f"  ⚠️ エラーメッセージ: {error_text[:100]}", level="warning")
         else:
             log("  ❌ 確認画面ボタンが見つかりません", level="error")
             return False
 
-        # 「出品する」ボタン
-        final_submit = page.query_selector("#auc_preview_submit_up")
+        # 「出品する」ボタン（複数パターンで試行）
+        final_submit = None
+        submit_selectors = [
+            "#auc_preview_submit_up",
+            "#auc_preview_submit",
+            "input[name='auc_preview_submit'][value='出品する']",
+            "button:has-text('出品する')",
+            "input[type='submit'][value='出品する']"
+        ]
+        
+        for selector in submit_selectors:
+            final_submit = page.query_selector(selector)
+            if final_submit:
+                log(f"  🔍 出品ボタンを発見: {selector}")
+                break
+        
         if final_submit:
             log("  🔘 最終出品ボタンをクリック中...")
-            final_submit.click()
-            log("  ✅ 出品ボタンをクリックしました")
-
-            # 完了を待つ
+            
+            # ボタンまでスクロール
+            page.evaluate("element => element.scrollIntoView({behavior: 'smooth', block: 'center'})", final_submit)
+            time.sleep(0.5)
+            
+            # 複数の方法でクリックを試行
             try:
-                page.wait_for_url(lambda url: "show/complete" in url or "my/selling" in url, timeout=30000)
+                # 方法1: 通常のクリック
+                final_submit.click()
+                log("  ✅ 出品ボタンをクリックしました")
+            except Exception as e1:
+                log(f"  ⚠️ 通常クリック失敗、JavaScriptでクリックを試行: {str(e1)[:50]}", level="warning")
+                try:
+                    # 方法2: JavaScriptでクリック
+                    page.evaluate("element => element.click()", final_submit)
+                    log("  ✅ 出品ボタンをJavaScriptでクリックしました")
+                except Exception as e2:
+                    log(f"  ❌ JavaScriptクリックも失敗: {str(e2)[:50]}", level="error")
+                    return False
+
+            # 完了を待つ（完了メッセージの表示を検出）
+            try:
+                # 完了メッセージが表示されるまで待機
+                page.wait_for_selector(
+                    "text=/出品手続きが完了しました|出品が完了しました|ご利用ありがとうございました/",
+                    timeout=60000
+                )
                 log(f"  ✅ {hinban} の新規出品完了")
                 return True
             except Exception as wait_error:
-                # タイムアウト後のURL確認
+                # タイムアウト後に完了メッセージを再確認
                 final_url = page.url
                 log(f"  ⚠️ 完了待機タイムアウト。現在のURL: {final_url}", level="warning")
+                
+                # ページ内容から完了メッセージを検索
+                page_text = page.content()
+                if "出品手続きが完了しました" in page_text or "出品が完了しました" in page_text or "ご利用ありがとうございました" in page_text:
+                    log(f"  ✅ {hinban} の新規出品完了（タイムアウト後にメッセージで確認）")
+                    return True
+                
+                # 完了ページURLでも確認（念のため）
+                if "show/complete" in final_url or "my/selling" in final_url:
+                    log(f"  ✅ {hinban} の新規出品完了（タイムアウト後URLで確認）")
+                    return True
                 
                 # エラーメッセージの再確認
                 error_msgs = page.query_selector_all(".error, .ErrorMessage, .Warning__text, [class*='error'], [class*='Error']")
@@ -1016,11 +1237,28 @@ def main():
                 log(f"\n【ステップ2】再出品対象を選定（入札>ウォッチ>アクセス）")
                 
                 processed_ids = load_processed_ids(PROCESSED_RELIST_LOG)
+                posted_hinban = load_posted_hinban(POSTED_HINBAN_LOG)
                 ended_items_relist = ended_items[~ended_items['auction_id'].isin(processed_ids)].copy()
                 
                 # タイトル重複排除
                 active_titles = set(active_items['title'].unique())
                 ended_items_relist = ended_items_relist[~ended_items_relist['title'].isin(active_titles)]
+                
+                # 既出品品番を除外
+                def extract_hinban(title):
+                    match = re.match(r'^\s*(\d+)', str(title))
+                    if match:
+                        return normalize_hinban(match.group(1))
+                    return None
+                
+                ended_items_relist['hinban'] = ended_items_relist['title'].apply(extract_hinban)
+                # 既出品品番を除外（normalize_hinbanがNoneを返す1桁品番は自動的に除外される）
+                before_count = len(ended_items_relist)
+                ended_items_relist = ended_items_relist[
+                    ~ended_items_relist['hinban'].isin(posted_hinban)
+                ]
+                excluded_count = before_count - len(ended_items_relist)
+                log(f"  📋 出品済み品番除外: {excluded_count} 件除外、残り {len(ended_items_relist)} 件")
                 
                 if not ended_items_relist.empty:
                     ended_items_relist.sort_values(by=['bids', 'watch', 'access'], ascending=False, inplace=True)
@@ -1035,16 +1273,28 @@ def main():
                         
                         # タイトルから品番を抽出（ヒント情報として渡す）
                         hinban_hint = None
-                        match = re.match(r'^(\d+)', title)
+                        match = re.match(r'^\s*(\d+)', title)
                         if match:
-                            hinban_hint = match.group(1).lstrip('0')
+                            hinban_hint = normalize_hinban(match.group(1))
+                            # 既出品品番チェック
+                            if hinban_hint and hinban_hint in posted_hinban:
+                                log(f"  ⏭️ 品番 {hinban_hint} は既に出品済みのためスキップ")
+                                save_processed_id(auction_id, PROCESSED_RELIST_LOG)
+                                continue
                         
                         if relist_item(page, auction_id, hinban_hint):
                             save_processed_id(auction_id, PROCESSED_RELIST_LOG)
+                            # 品番を記録（再出品でも記録）
+                            if hinban_hint:
+                                save_posted_hinban(hinban_hint, POSTED_HINBAN_LOG)
+                                log(f"  ✅ 品番 {hinban_hint} を記録")
                             time.sleep(5)
                         else:
                             log(f"⚠️ {auction_id} 再出品失敗", level="warning")
                             save_processed_id(auction_id, PROCESSED_RELIST_LOG)
+                            # 失敗しても品番を記録（重複出品防止）
+                            if hinban_hint:
+                                save_posted_hinban(hinban_hint, POSTED_HINBAN_LOG)
                 else:
                     log("ℹ️ 再出品対象なし", level="info")
 

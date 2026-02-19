@@ -16,7 +16,7 @@ load_dotenv()
 
 # ===== 設定 =====
 SCRIPT_DIR = Path(__file__).parent
-ROOT_DIR = SCRIPT_DIR.parent
+ROOT_DIR = SCRIPT_DIR
 
 # BASE管理画面のURL
 BASE_ADMIN_URL = 'https://admin.thebase.com/'
@@ -82,8 +82,8 @@ def download_base_csv():
         print("BASE_PASSWORD=your_password")
         return False
     
-    # ダウンロードディレクトリをクリア
-    for old_file in DOWNLOAD_DIR.glob('*.csv'):
+    # ダウンロードディレクトリをクリア（作業用のみ）
+    for old_file in DOWNLOAD_DIR.glob('base_products_*.csv'):
         try:
             old_file.unlink()
         except Exception:
@@ -217,12 +217,17 @@ def download_base_csv():
                         # ファイルを保存
                         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
                         temp_path = DOWNLOAD_DIR / f'base_products_{timestamp}.csv'
+                        shop_raw_path = DOWNLOAD_DIR / f'dorekai-base-shop-{timestamp}.csv'
                         download.save_as(temp_path)
                         
                         print(f"✅ ダウンロード完了: {temp_path.name}")
+
+                        # BASEから取得した元CSVを別名で保存
+                        import shutil
+                        shutil.copy(temp_path, shop_raw_path)
+                        print(f"✅ 元CSV保存: {shop_raw_path}")
                         
                         # ファイルを最終的な場所にコピー
-                        import shutil
                         shutil.copy(temp_path, OUTPUT_CSV)
                         print(f"✅ ファイル保存: {OUTPUT_CSV}")
                         
@@ -247,8 +252,12 @@ def download_base_csv():
                 if csv_files:
                     latest_file = max(csv_files, key=lambda p: p.stat().st_mtime)
                     print(f"✅ ファイル検出: {latest_file.name}")
+                    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                    shop_raw_path = DOWNLOAD_DIR / f'dorekai-base-shop-{timestamp}.csv'
                     
                     import shutil
+                    shutil.copy(latest_file, shop_raw_path)
+                    print(f"✅ 元CSV保存: {shop_raw_path}")
                     shutil.copy(latest_file, OUTPUT_CSV)
                     print(f"✅ ファイル保存: {OUTPUT_CSV}")
                 else:
